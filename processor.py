@@ -47,13 +47,13 @@ class CBDataProcessor(object):
         -> new df with `start_period` column where 0 means first 5 minutes, 1 means between first 5 and first 10 minutes, etc
         """
 
-        # Convert to timestamps
-        df[col] = pd.to_datetime(df[col])
+        # Convert to timestamps (specify explicit format for speed)
+        df[col] = pd.to_datetime(df[col], format='%m/%d/%Y %H:%M:%S')
 
         # Convert int64index to datetime index
-        # Group using timegrouper and create new column for start period and stop period
         df = df.set_index(pd.DatetimeIndex(df[col]))
 
+        # Group using timegrouper and create new column for start period and stop period
         period_grouper = pd.TimeGrouper('{}Min'.format(self.period))
 
         # Group by `col` into periods
