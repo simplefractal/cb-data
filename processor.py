@@ -1,11 +1,10 @@
 import time
 import numpy as np
 import pandas as pd
-
+from utils import get_feature_and_target
 
 ROW_LIMIT = 10000
 COLUMNS = ["starttime", "stoptime", "start station id", "end station id"]
-TARGET_STATION_ID = "529"
 
 
 class CBDataProcessor(object):
@@ -141,20 +140,8 @@ class CBDataProcessor(object):
         """
         Separate data into feature data and target
         """
-        X = df.copy()
-        X.to_csv('data/processed_{}_rows_{}_bikes_out_{}_period.csv'.format(self.row_limit, self.bikes_out, self.period))
-        # Turn number of out in station TARGET_STATION_ID into 1s and 0s
-        answer_series = (
-            df["{}_out".format(TARGET_STATION_ID) ] > self.bikes_out).apply(int)
-
-        # Exclude the last period because we have no "right answer" to check against
-        X = X[:-1]
-        # Similarly, exclude first row of answer series to make sure we're aligned with our data set
-        y = answer_series[1:]
-        return {
-            "data": X,
-            "target": y
-        }
+        df.to_csv('data/processed_{}_rows_{}_bikes_out_{}_period.csv'.format(self.row_limit, self.bikes_out, self.period))
+        return get_feature_and_target(df, self.bikes_out)
 
     def process(self):
         """
