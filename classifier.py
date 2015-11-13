@@ -8,12 +8,14 @@ ROW_LIMIT = 10000
 
 
 class CBClassifier(object):
-    def __init__(self, feature_data, target, classifier="random_forest", classifier_kwargs={}, row_limit=ROW_LIMIT, k_folds=5):
+    def __init__(self, feature_data, target, classifier="random_forest", classifier_kwargs={}, row_limit=ROW_LIMIT, k_folds=5, scoring='accuracy'):
         """
         We can tune the following parameters:
         - classifier we use (random forest, etc.)
         - number of folds in our standard k-fold cross-validation
         - number of rows of our data to use
+        - scoring ('accuracy', 'f1', etc, all options here:
+            http://scikit-learn.org/stable/modules/model_evaluation.html#the-scoring-parameter-defining-model-evaluation-rules)
         """
         self.classifier = classifier
         self.classifier_kwargs = classifier_kwargs
@@ -21,6 +23,7 @@ class CBClassifier(object):
         self.feature_data = feature_data
         self.target = target
         self.k_folds = k_folds
+        self.scoring= scoring
 
     def get_classifier(self):
         return {
@@ -39,7 +42,8 @@ class CBClassifier(object):
             classifier,
             self.feature_data[:self.row_limit],
             self.target[:self.row_limit],
-            cv=self.k_folds
+            cv=self.k_folds,
+            scoring=self.scoring,
         )
         end = time.time()
         return {
