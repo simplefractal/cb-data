@@ -130,6 +130,21 @@ class CBDataProcessor(object):
 
         return df_merged
 
+    def add_cyclicality(self, df):
+        """
+        Add the following columns to our data frame:
+        - hour (0 - 23)
+        - day of the week (0 - 6)
+        - weekend? (True/False)
+        - month (0 - 11)
+        """
+        df['hour'] = df['period'].apply(lambda x: x.hour)
+        df['dayofweek'] = df['period'].apply(lambda x: x.dayofweek)
+        df['is_weekend'] = df['period'].apply(lambda x: x.dayofweek in [5, 6])
+        df['month'] = df['period'].apply(lambda x: x.month)
+
+        return df
+
     def prepare_data(self, df):
         """
         Transforms the raw data into the format we want for classification:
@@ -150,13 +165,16 @@ class CBDataProcessor(object):
 
         df_merged = self.merge_flow_dfs(bike_start_df, bike_stop_df)
 
-        return df_merged
+        df_cyclical = self.add_cyclicality(df_merged)
+
+        return df_cyclical
 
     def separate_into_feature_and_target(self, df):
         """
         Separate data into feature data and target
         """
         df.to_csv('data/processed_{}_rows_{}_bikes_out_{}_period.csv'.format(self.row_limit, self.bikes_out, self.period))
+        del df['period']
         return get_feature_and_target(df, self.bikes_out)
 
     def process(self):
