@@ -130,7 +130,6 @@ class CBDataProcessor(object):
 
         return df_merged
 
-
     def prepare_data(self, df):
         """
         Transforms the raw data into the format we want for classification:
@@ -152,7 +151,6 @@ class CBDataProcessor(object):
         df_merged = self.merge_flow_dfs(bike_start_df, bike_stop_df)
 
         return df_merged
-
 
     def separate_into_feature_and_target(self, df):
         """
