@@ -105,6 +105,8 @@ class CBDataProcessor(object):
         df_start.drop(in_start_only, axis=1, inplace=True)
         df_stop.drop(in_stop_only, axis=1, inplace=True)
 
+        # We do outer join here so we include periods even if bikes only moved
+        # in one direction for the duration of that period
         df_merged = pd.merge(
             df_stop,
             df_start,
