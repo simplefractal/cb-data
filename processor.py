@@ -1,3 +1,4 @@
+import re
 import time
 import numpy as np
 import pandas as pd
@@ -5,6 +6,7 @@ from utils import get_feature_and_target
 
 ROW_LIMIT = 10000
 COLUMNS = ["starttime", "stoptime", "start station id", "end station id"]
+TIMESTAMP_FORMAT = '%m/%d/%Y %H:%M:%S'
 
 
 class CBDataProcessor(object):
@@ -37,84 +39,96 @@ class CBDataProcessor(object):
         """
         return pd.read_csv(self.data_filename, usecols=self.cols, nrows=self.row_limit)
 
-    def agg_by_period(self, df, col, new_col):
+    def convert_ts(self, df):
         """
-        Convert the values in df.col to periods of length `self.period`
-        and save in a new column called `new_col`.
-
-        self.period = 5
-        self.agg_by_period(df, 'start_time', 'start_period')
-        -> new df with `start_period` column where 0 means first 5 minutes, 1 means between first 5 and first 10 minutes, etc
+        Convert dates to timestamp objects and sets that as index.
         """
 
         # Convert to timestamps (specify explicit format for speed)
-        df[col] = pd.to_datetime(df[col], format='%m/%d/%Y %H:%M:%S')
+        df['starttime'] = pd.to_datetime(df['starttime'], format=TIMESTAMP_FORMAT)
+        df['stoptime'] = pd.to_datetime(df['stoptime'], format=TIMESTAMP_FORMAT)
 
-        # Convert int64index to datetime index
-        df = df.set_index(pd.DatetimeIndex(df[col]))
-
-        # Group using timegrouper and create new column for start period and stop period
-        period_grouper = pd.TimeGrouper('{}Min'.format(self.period))
-
-        # Group by `col` into periods
-        group_by = df.groupby(period_grouper, as_index=False).apply(lambda x: x[col])
-
-        df[new_col] = group_by.index.get_level_values(0)
+        # Use start time as datetime index on dataframe. We need to do this to use TimeGrouper.
+        df = df.set_index(pd.DatetimeIndex(df['starttime']))
 
         return df
 
-    def agg_bike_flow_by_period(self, df, groupby_cols, output_col):
+    def agg_bike_flow_by_period(self, df, action):
         """
         Creates new DataFrame stating how many bikes started/stopped in each period by station.
         """
 
-        grouped_by = df.groupby(groupby_cols)
-        bike_flow_df = pd.DataFrame({'count' : grouped_by.size()}).reset_index()
+        # Make sure we don't modify the original since we're removing cols below
+        df_raw = df.copy()
 
-        # Rename columns
-        bike_flow_df.columns = ["period", "station_id", output_col]
-        return bike_flow_df
+        # Group using timegrouper and create new column for start period and stop period
+        period_grouper = pd.TimeGrouper('{}Min'.format(self.period))
 
-    def concat_bike_flow_dfs(self, start_df, stop_df):
+        if action == 'started':
+            station_col = 'start station id'
+            del df_raw['end station id']
+        else:
+            station_col = 'end station id'
+            del df_raw['start station id']
+
+        # Group by period and station
+        grouped = df_raw.groupby([period_grouper, station_col])
+
+        # We no longer need these columns
+        del df_raw['starttime']
+        del df_raw['stoptime']
+
+        # Gives # bikes started/stopped in each time period
+        df_result = grouped.aggregate(np.size)
+
+        # Each period becomes a row, and each station id a column
+        unstacked = df_result.unstack(1).fillna(0)
+
+        # Reset the index so that the period becomes a column (classifier expects this format)
+        df_reset = unstacked.reset_index()
+
+        # Rename the timestamp column period (defaults to index because was previous index)
+        df_reset.rename(columns={'index': 'period'}, inplace=True)
+
+        return df_reset
+
+    def merge_flow_dfs(self, df_start, df_stop):
         """
-        Combine started and stopped bike flow dataframes.
-        Ensure each station id has one row per period.
+        Joins the bike start/stop dataframes.
         """
-        df_combined = pd.concat([start_df, stop_df]).fillna(0)
+        # Limit our analysis to stations that had at least one bike in each direction (in/out)
+        # for the duration of our data set. The other stations must have had corrupt data or be
+        # Citibike maintenance stations or something.
+        in_stop_only = set(df_stop.columns).difference(df_start.columns)
+        in_start_only = set(df_start.columns).difference(df_stop.columns)
 
-        # Let's group on period and station_id and then sum up along start_count and stop_count
-        # And reset the multi-level index so we have a normal DataFrame
-        merged_df = df_combined.groupby(['period', 'station_id']).sum().reset_index()
-        return merged_df
+        df_start.drop(in_start_only, axis=1, inplace=True)
+        df_stop.drop(in_stop_only, axis=1, inplace=True)
 
-    def pivot(self, df):
-        """
-        Creates a started/ended cols for each station id.
-        Each row corresponds to snapshot of bike flow across all stations for a particular period.
-        """
-        # Let's construct a pivot table
-        pivoted = pd.pivot_table(
-            df,
-            index=["period"],
-            columns=["station_id"],
-            aggfunc=np.sum,
-            fill_value=0)
+        # We do outer join here so we include periods even if bikes only moved
+        # in one direction for the duration of that period
+        df_merged = pd.merge(
+            df_stop,
+            df_start,
+            how="outer",
+            on="period",
+            suffixes=('_in', '_out'))
 
-        # Go from multilevel index of start > station_id and stop > station_id to {station_id}_start and {station_id}_stop
-        deeper_cols = pivoted.columns.get_level_values(1)
-        top_level_cols = pivoted.columns.get_level_values(0)
+        # Exclude the first column: period for now
+        flow_columns = df_merged.columns[1:]
 
-        # Flattening the columns
-        resultant_cols = []
-        for i, station_id in enumerate(deeper_cols):
-            if top_level_cols[i] == "start_count":
-                resultant_cols.append("{}_{}".format(station_id, "out"))
-            else:
-                resultant_cols.append("{}_{}".format(station_id, "in"))
-        pivoted.columns = resultant_cols
-        pivoted = pivoted.reset_index()
+        # Define regex for use in sort function to convert '72_in' -> 72
+        non_digit = re.compile(r'[^\d]+')
 
-        return pivoted
+        # Sort by the number of the station id, not alpabetically
+        new_cols = sorted(flow_columns, key=lambda x: int(non_digit.sub('', x)))
+
+        # We still have the period column display first
+        new_cols.insert(0, 'period')
+
+        df_merged = df_merged.reindex_axis(new_cols, axis=1)
+
+        return df_merged
 
     def prepare_data(self, df):
         """
@@ -126,15 +140,17 @@ class CBDataProcessor(object):
         According to the above table, in period 0, 1 bike was docked at station 173 and 2 were taken out.
         """
 
-        df = self.agg_by_period(df, 'starttime', 'start_period')
-        df = self.agg_by_period(df, 'stoptime', 'stop_period')
+        df = self.convert_ts(df)
 
-        bike_start_df = self.agg_bike_flow_by_period(df, ['start_period', 'start station id'], 'start_count')
-        bike_stop_df = self.agg_bike_flow_by_period(df, ['stop_period', 'end station id'], 'stop_count')
+        bike_start_df = self.agg_bike_flow_by_period(
+            df, action='started')
 
-        df = self.concat_bike_flow_dfs(bike_start_df, bike_stop_df)
+        bike_stop_df = self.agg_bike_flow_by_period(
+            df, action='stopped')
 
-        return self.pivot(df)
+        df_merged = self.merge_flow_dfs(bike_start_df, bike_stop_df)
+
+        return df_merged
 
     def separate_into_feature_and_target(self, df):
         """
@@ -152,6 +168,7 @@ class CBDataProcessor(object):
         start = time.time()
         df = self.read_data()
         df = self.prepare_data(df)
+
         result = self.separate_into_feature_and_target(df)
         end = time.time()
         result['duration'] = end - start
