@@ -96,8 +96,9 @@ class CBDataProcessor(object):
         """
         Joins the bike start/stop dataframes.
         """
-
-        # Ignore stations where bikes there is only recorded action in one direction
+        # Limit our analysis to stations that had at least one bike in each direction (in/out)
+        # for the duration of our data set. The other stations must have had corrupt data or be
+        # Citibike maintenance stations or something.
         in_stop_only = set(df_stop.columns).difference(df_start.columns)
         in_start_only = set(df_start.columns).difference(df_stop.columns)
 
